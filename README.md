@@ -1,5 +1,3 @@
-# fm-rvs
-```markdown
 # Foundation-Model-Guided Coarse-to-Fine Learning for Generalizable Retinal Vessel Segmentation
 
 This repository contains the official PyTorch implementation for our BMVC submission.
