@@ -72,35 +72,7 @@ python test.py
 
 The script will output the per-image macro metrics and save the predicted binary masks along with red-overlay visualizations in the `test_predict_vis/` directory.
 
-## 6. Key Implementation Details (Code Review Guide)
 
-For reviewers inspecting the code, we would like to highlight the implementations of our two core contributions, which ensure a conservative and precise refinement:
-
-**1. Residual Logit Refinement:**
-Instead of directly predicting a new mask, the refinement network operates in the logit space to avoid randomly connecting segments. You can find this in `train.py` under the `TwoStageUNet` class:
-
-```python
-# Multi-dimensional representation fusion
-x2 = torch.cat([x, p1, f1], dim=1) 
-# Residual logit correction
-residual = self.stage2(x2)
-# Final refinement via logit addition and sigmoid activation
-p2 = torch.sigmoid(logit1 + residual)
-
-```
-
-**2. Differential Learning Rate for Joint Fine-Tuning:**
-To preserve the domain-robust representation learned from large-scale pseudo-labels while adapting to expert annotations, Stage 1 is updated with a smaller learning rate ($\eta_c = 0.1 \eta_r$). This is implemented in `train.py` during the optimizer setup:
-
-```python
-param_groups.append({
-    "params": two_stage.stage1.parameters(),
-    "lr": cfg.LR_STAGE2_STAGE1_FINETUNE # Set to 0.1x of Stage 2 LR
-})
-param_groups.append({
-    "params": two_stage.stage2.parameters(),
-    "lr": cfg.LR_STAGE2
-})
 
 ```
 
