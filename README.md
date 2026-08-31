@@ -1,6 +1,9 @@
 # Foundation-Model-Guided Coarse-to-Fine Learning for Generalizable Retinal Vessel Segmentation
-
 This repository contains the official PyTorch implementation for our BMVC submission.
+## Overview
+
+**Our Proposed Coarse-to-Fine Framework:**
+![Framework](assets/framework.png)
 
 ## 1. Environment Setup
 
@@ -15,15 +18,21 @@ pip install -r requirements.txt
 
 * `train.py`: Contains the definition of the Two-Stage UNet, dataset loaders, and the training loop for both Stage 1 (Pseudo-supervised Pre-training) and Stage 2 (Expert Refinement).
 * `test.py`: Inference script to evaluate the trained model on cross-domain datasets and compute region overlap (Dice) as well as topology metrics (clDice, HD95).
-* `data/`: Contains the complete 8k unlabeled auxiliary fundus image pool and their corresponding foundation-model-generated pseudo-masks.
-* `checkpoints/`: Contains the full pre-trained model checkpoints for direct inference and reproducibility verification.
+* `data/`: Contains a small subset of sample pairs (original images, manual ground truths, and foundation-model-generated pseudo-masks) for quick verification of the dataset loading logic.
+* `checkpoints/`: Directory intended for pre-trained model checkpoints.
 
-## 3. Data & Pre-trained Weights
+## 3. Data & Pre-trained Weights (Google Drive)
 
-To ensure full transparency and reproducibility, we have included the complete dataset and model weights in this supplementary material:
+Please note that the data included in this repository is for **demonstration purposes only** to help reviewers quickly verify the code logic.
 
-* **8k Auxiliary Dataset**: The full pool of unlabeled fundus images along with their generated pseudo-masks are provided in the `data/` directory.
-* **Pre-trained Models**: The final Stage 2 model weights are located in the `checkpoints/` folder. You can directly run `test.py` to reproduce the quantitative results reported in our main paper.
+Due to file size limits, the complete dataset and the full pre-trained model weights are hosted on Google Drive. To ensure full transparency and reproducibility, you can download them here:
+
+* **[Google Drive Link Here]**
+
+**Contents of the Google Drive:**
+
+* **8k Auxiliary Dataset**: The full pool of unlabeled fundus images along with their generated pseudo-masks (to be placed in the `data/` directory).
+* **Pre-trained Models**: The final Stage 2 model weights (e.g., `best_stage2_model.pth`). Please place the downloaded `.pth` files into the `checkpoints/` folder. You can then directly run `test.py` to reproduce the quantitative results reported in our main paper.
 
 ## 4. Pseudo-label Generation Protocol
 
@@ -54,7 +63,7 @@ The script will automatically handle the multi-dimensional feature fusion and th
 
 ### Inference (Testing)
 
-To use the provided pre-trained checkpoint, update the `MODEL_PATH` in `test.py` to point to the file in `checkpoints/` and run:
+To use the provided pre-trained checkpoint, download it from the Google Drive link, place it in the `checkpoints/` directory, update the `MODEL_PATH` in `test.py`, and run:
 
 ```bash
 python test.py
