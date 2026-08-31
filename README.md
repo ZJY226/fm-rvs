@@ -77,9 +77,3 @@ python test.py
 
 The script will output the per-image macro metrics and save the predicted binary masks along with red-overlay visualizations in the `test_predict_vis/` directory.
 
-
-```
-
-```
-
-```
