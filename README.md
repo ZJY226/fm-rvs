@@ -28,7 +28,7 @@ Please note that the data included in this repository is for **demonstration pur
 
 Due to file size limits, the complete 8k auxiliary dataset and the Stage 1 pre-trained model weights are hosted on Google Drive. To ensure full transparency and reproducibility, you can download them here:
 
-* **[Google Drive Link Here]**
+* **[[Google Drive Link Here](https://drive.google.com/drive/folders/13nT04riY8i0f81bBVp3fi4s18HXqlMEE?usp=drive_link)]**
 
 **Contents of the Google Drive:**
 
