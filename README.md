@@ -1,5 +1,7 @@
+```markdown
 # Foundation-Model-Guided Coarse-to-Fine Learning for Generalizable Retinal Vessel Segmentation
 This repository contains the official PyTorch implementation for our BMVC submission.
+
 ## Overview
 
 **Our Proposed Coarse-to-Fine Framework:**
@@ -19,20 +21,20 @@ pip install -r requirements.txt
 * `train.py`: Contains the definition of the Two-Stage UNet, dataset loaders, and the training loop for both Stage 1 (Pseudo-supervised Pre-training) and Stage 2 (Expert Refinement).
 * `test.py`: Inference script to evaluate the trained model on cross-domain datasets and compute region overlap (Dice) as well as topology metrics (clDice, HD95).
 * `data/`: Contains a small subset of sample pairs (original images, manual ground truths, and foundation-model-generated pseudo-masks) for quick verification of the dataset loading logic.
-* `checkpoints/`: Directory intended for pre-trained model checkpoints.
+* `models/`: Directory intended for pre-trained model checkpoints.
 
 ## 3. Data & Pre-trained Weights (Google Drive)
 
 Please note that the data included in this repository is for **demonstration purposes only** to help reviewers quickly verify the code logic.
 
-Due to file size limits, the complete dataset and the full pre-trained model weights are hosted on Google Drive. To ensure full transparency and reproducibility, you can download them here:
+Due to file size limits, the complete 8k auxiliary dataset and the Stage 1 pre-trained model weights are hosted on Google Drive. To ensure full transparency and reproducibility, you can download them here:
 
 * **[Google Drive Link Here]**
 
 **Contents of the Google Drive:**
 
 * **8k Auxiliary Dataset**: The full pool of unlabeled fundus images along with their generated pseudo-masks (to be placed in the `data/` directory).
-* **Pre-trained Models**: The final Stage 2 model weights (e.g., `best_stage2_model.pth`). Please place the downloaded `.pth` files into the `checkpoints/` folder. You can then directly run `test.py` to reproduce the quantitative results reported in our main paper.
+* **Stage 1 Pre-trained Model**: The model weights (64-channel base) pre-trained on the 8k pseudo-labeled dataset. Please place the downloaded `.pth` file into the `models/` folder (or update `PRETRAINED_STAGE1_PATH` in `train.py`). This serves as the robust structural prior for downstream fine-tuning.
 
 ## 4. Pseudo-label Generation Protocol
 
@@ -50,9 +52,13 @@ To ensure full transparency and reproducibility, we provide the exact text promp
 
 ## 5. How to Run
 
-### Training
+### Training (Stage 2 Refinement)
 
-To train the model from scratch on your own dataset, adjust the `ORIGINAL_DATA_PATHS` in the `CFG` class within `train.py`, and run:
+To leverage our foundation-model-guided prior and train the refinement network on your own dataset:
+
+1. Download the Stage 1 pre-trained model from Google Drive and ensure `USE_PRETRAINED_STAGE1 = True` in the `CFG` class of `train.py`.
+2. Adjust the `ORIGINAL_DATA_PATHS` to point to your local dataset.
+3. Run the training script:
 
 ```bash
 python train.py
@@ -63,7 +69,7 @@ The script will automatically handle the multi-dimensional feature fusion and th
 
 ### Inference (Testing)
 
-To use the provided pre-trained checkpoint, download it from the Google Drive link, place it in the `checkpoints/` directory, update the `MODEL_PATH` in `test.py`, and run:
+Once you have finished training the full Two-Stage model on your target dataset, update the `MODEL_PATH` in `test.py` to point to your newly saved Stage 2 checkpoint (e.g., `models/best_stage2_model.pth`), and run:
 
 ```bash
 python test.py
@@ -71,7 +77,6 @@ python test.py
 ```
 
 The script will output the per-image macro metrics and save the predicted binary masks along with red-overlay visualizations in the `test_predict_vis/` directory.
-
 
 
 ```
