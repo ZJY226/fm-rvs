@@ -574,12 +574,14 @@ def run_one_epoch(model, loader, optimizer, device, loss_fn, threshold, train: b
         else:
             with torch.no_grad():
                 out = model(imgs)
-                # 处理 TwoStage 返回元组的情况，取 p2 作为最终预测
                 if isinstance(out, tuple):
-                    prob = out[1]   # 使用 stage2 的输出
+                    prob = out[1]   
                 else:
                     prob = out
-                # loss = loss_fn(prob, msks)
+                
+                # ---------------------
+                loss = loss_fn(prob, msks)
+                total_loss += loss.item()
 
 
         if train:
