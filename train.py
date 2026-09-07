@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as T
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, binary_erosion
 from skimage.morphology import skeletonize
 
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -50,10 +50,10 @@ class CFG:
     # ---------- 数据路径（训练时用 data/xxx） ----------
     STAGE1_IMAGES: str = 'data/stage1/images'
     STAGE1_MASKS: str = 'data/stage1/masks_coarse'
-    STAGE2_IMAGES: str = 'data/stage2/images'
-    STAGE2_MASKS: str = 'data/stage2/masks_fine'
-    TEST_IMAGES: str = 'data/test/images'
-    TEST_MASKS: str = 'data/test/masks_fine'
+    STAGE2_IMAGES: str = 'Dataset/LES/train/images'
+    STAGE2_MASKS: str = 'Dataset/LES/train/gt'
+    TEST_IMAGES: str = 'Dataset/LES/test/images'
+    TEST_MASKS: str = 'Dataset/LES/test/gt'
 
     # ---------- DataLoader ----------
     BATCH_SIZE: int = 4
@@ -106,7 +106,7 @@ def set_seed(seed: int):
 
 def preprocess_and_match_data(original_images_path, original_masks_path, output_images_path, output_masks_path,
                               clean_existing=True):
-    """把匹配到的 image/mask 复制到 data/xxx 下（同你原逻辑，稍微精简）"""
+    """把匹配到的 image/mask 复制到 data/xxx 下"""
     if clean_existing:
         if os.path.exists(output_images_path):
             shutil.rmtree(output_images_path)
@@ -151,6 +151,7 @@ def preprocess_and_match_data(original_images_path, original_masks_path, output_
 
     return len(pairs)
 
+
 class FeatureAlign(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
@@ -164,6 +165,7 @@ class FeatureAlign(nn.Module):
     def forward(self, x):
         return self.align(x)
 
+
 # =========================
 # Model: UNet(base_ch可配)
 # =========================
@@ -173,43 +175,40 @@ class UNet(nn.Module):
         super().__init__()
 
         c1 = base_ch
-        c2 = base_ch*2
-        c3 = base_ch*4
-        c4 = base_ch*8
-        c5 = base_ch*16
+        c2 = base_ch * 2
+        c3 = base_ch * 4
+        c4 = base_ch * 8
+        c5 = base_ch * 16
 
-        self.enc1 = self.block(in_channels,c1)
-        self.enc2 = self.block(c1,c2)
-        self.enc3 = self.block(c2,c3)
-        self.enc4 = self.block(c3,c4)
+        self.enc1 = self.block(in_channels, c1)
+        self.enc2 = self.block(c1, c2)
+        self.enc3 = self.block(c2, c3)
+        self.enc4 = self.block(c3, c4)
 
-        self.middle = self.block(c4,c5)
+        self.middle = self.block(c4, c5)
 
-        self.dec4 = self.block(c5+c4,c4)
-        self.dec3 = self.block(c4+c3,c3)
-        self.dec2 = self.block(c3+c2,c2)
-        self.dec1 = self.block(c2+c1,c1)
+        self.dec4 = self.block(c5 + c4, c4)
+        self.dec3 = self.block(c4 + c3, c3)
+        self.dec2 = self.block(c3 + c2, c2)
+        self.dec1 = self.block(c2 + c1, c1)
 
-        self.final = nn.Conv2d(c1,out_channels,1)
+        self.final = nn.Conv2d(c1, out_channels, 1)
 
         self.pool = nn.MaxPool2d(2)
-        self.up = nn.Upsample(scale_factor=2,mode='bilinear',align_corners=True)
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-    def block(self,in_ch,out_ch):
-
+    def block(self, in_ch, out_ch):
         return nn.Sequential(
-            nn.Conv2d(in_ch,out_ch,3,padding=1),
+            nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(out_ch,out_ch,3,padding=1),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True)
         )
 
-
-    def forward(self,x,return_feature=False,return_logit=False):
-
+    def forward(self, x, return_feature=False, return_logit=False):
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
@@ -217,99 +216,56 @@ class UNet(nn.Module):
 
         m = self.middle(self.pool(e4))
 
-        d4 = self.dec4(torch.cat([self.up(m),e4],1))
-        d3 = self.dec3(torch.cat([self.up(d4),e3],1))
-        d2 = self.dec2(torch.cat([self.up(d3),e2],1))
-        d1 = self.dec1(torch.cat([self.up(d2),e1],1))
+        d4 = self.dec4(torch.cat([self.up(m), e4], 1))
+        d3 = self.dec3(torch.cat([self.up(d4), e3], 1))
+        d2 = self.dec2(torch.cat([self.up(d3), e2], 1))
+        d1 = self.dec1(torch.cat([self.up(d2), e1], 1))
 
         logit = self.final(d1)
         prob = torch.sigmoid(logit)
 
         if return_feature and return_logit:
-            return prob,d1,logit
+            return prob, d1, logit
 
         if return_feature:
-            return prob,d1
+            return prob, d1
 
         return prob
 
 
-
 class TwoStageUNet(nn.Module):
-
-    def __init__(
-        self,
-        stage1_model,
-        stage1_ch=64,
-        stage2_base_ch=32,
-        freeze_stage1=False
-    ):
-
+    def __init__(self, stage1_model, stage1_ch=64, stage2_base_ch=32, freeze_stage1=False):
         super().__init__()
-
         self.stage1 = stage1_model
         self.freeze_stage1 = freeze_stage1
+        self.align = FeatureAlign(stage1_ch, stage1_ch)
 
-        # feature alignment
-        self.align = FeatureAlign(stage1_ch,stage1_ch)
-
-        # stage2 输入：
-        # image (1)
-        # coarse mask (1)
-        # feature (stage1_ch)
         in_ch = 1 + 1 + stage1_ch
-        # in_ch = 1 + stage1_ch
-
         self.stage2 = UNet(
             in_channels=in_ch,
             out_channels=1,
             base_ch=stage2_base_ch
         )
 
-        # stage1 是否冻结
         for p in self.stage1.parameters():
             p.requires_grad = not freeze_stage1
 
-
-    def forward(self,x):
-
+    def forward(self, x):
         if self.freeze_stage1:
-
             with torch.no_grad():
-                p1,f1,logit1 = self.stage1(
-                    x,
-                    return_feature=True,
-                    return_logit=True
-                )
-
+                p1, f1, logit1 = self.stage1(x, return_feature=True, return_logit=True)
         else:
+            p1, f1, logit1 = self.stage1(x, return_feature=True, return_logit=True)
 
-            p1,f1,logit1 = self.stage1(
-                x,
-                return_feature=True,
-                return_logit=True
-            )
-
-
-        # feature align
         f1 = self.align(f1)
-
-
-        # concat refinement input
-        x2 = torch.cat([x,p1,f1],dim=1)
-        # x2 = torch.cat([x,f1],1)
-        # residual logits
+        x2 = torch.cat([x, p1, f1], dim=1)
         residual = self.stage2(x2)
-
-        # refinement
         p2 = torch.sigmoid(logit1 + residual)
-
-
-        return p1,p2
+        return p1, p2
 
 
 # =========================
-# Dataset（同名 or *_mask）
+# Dataset (使用 PIL 安全读取，修复 Transform 参数报错)
 # =========================
 class VesselDataset(Dataset):
     def __init__(self, images_path, masks_path, transform=None, stage=1):
@@ -318,7 +274,6 @@ class VesselDataset(Dataset):
         self.transform = transform
         self.stage = stage
 
-        # 检查路径是否存在
         if not os.path.exists(images_path):
             raise ValueError(f"图像路径不存在: {images_path}")
         if not os.path.exists(masks_path):
@@ -337,38 +292,33 @@ class VesselDataset(Dataset):
         print(f"找到图像文件: {len(self.images)} 个")
         print(f"找到掩码文件: {len(self.masks)} 个")
 
-        # 严格的文件匹配逻辑
+        # ---------------------
+        # 文件安全匹配逻辑
+        # ---------------------
+        mask_dict = {os.path.splitext(f)[0]: f for f in self.masks}
         self.matched_pairs = []
-        used_masks = set()
 
         for img_file in self.images:
             img_name = os.path.splitext(img_file)[0]
-            found_mask = None
+            found_mask = mask_dict.get(img_name)
 
-            # 精确匹配：文件名相同或文件名_mask
-            for mask_file in self.masks:
-                if mask_file in used_masks:
-                    continue
+            if not found_mask:
+                for s in ["_mask", "_manual", "_label", "_gt", "_seg", "_1stHO"]:
+                    if img_name + s in mask_dict:
+                        found_mask = mask_dict[img_name + s]
+                        break
 
-                mask_name = os.path.splitext(mask_file)[0]
-
-                # 精确匹配条件
-                if (mask_name == img_name or  # 同名
-                        mask_name == img_name + "_mask" or  # 图像名_mask
-                        mask_file == img_name + "_mask" + os.path.splitext(img_file)[1]):  # 图像名_mask.扩展名
-                    found_mask = mask_file
-                    break
+            if not found_mask:
+                for m_name, m_file in mask_dict.items():
+                    if m_name.startswith(img_name + "_") or m_name.startswith(img_name + " "):
+                        found_mask = m_file
+                        break
 
             if found_mask:
                 self.matched_pairs.append((img_file, found_mask))
-                used_masks.add(found_mask)
 
-        # 检查匹配结果
         if len(self.matched_pairs) == 0:
             raise ValueError("无法匹配图像和掩码文件")
-
-        if len(self.matched_pairs) != len(self.images):
-            print(f"警告: 只匹配了 {len(self.matched_pairs)}/{len(self.images)} 个图像文件")
 
         print(f"第{stage}阶段数据集加载成功: {len(self.matched_pairs)} 对图像-掩码")
 
@@ -377,34 +327,38 @@ class VesselDataset(Dataset):
 
     def __getitem__(self, idx):
         image_name, mask_name = self.matched_pairs[idx]
+        image_path = os.path.join(self.images_path, image_name)
+        mask_path = os.path.join(self.masks_path, mask_name)
 
         try:
-            # 读取图像和掩码
-            image = cv2.imread(os.path.join(self.images_path, image_name), cv2.IMREAD_GRAYSCALE)
-            mask = cv2.imread(os.path.join(self.masks_path, mask_name), cv2.IMREAD_GRAYSCALE)
+            # 1. 弃用 cv2，改用 PIL 强行读取并转换为灰度模式 ("L")
+            image_pil = Image.open(image_path).convert("L")
 
-            if image is None:
-                raise ValueError(f"无法读取图像: {image_name}")
-            if mask is None:
-                raise ValueError(f"无法读取掩码: {mask_name}")
+            # 2. 读取 Mask，保持原格式避免破坏彩色数据
+            mask_pil = Image.open(mask_path)
+            mask_np = np.array(mask_pil)
 
-            # 转换为PIL图像用于转换
-            image_pil = Image.fromarray(image)
-            mask_pil = Image.fromarray(mask)
+            # 3. 彩色动静脉标签保护 (跨通道融合)
+            if len(mask_np.shape) >= 3:
+                mask_np = np.sum(mask_np, axis=2)
 
+            # 4. 强制二值化为 0 和 255
+            mask_np = (mask_np > 0).astype(np.uint8) * 255
+            mask_pil = Image.fromarray(mask_np)
+
+            # 5. 执行数据增强和 Tensor 转换
             if self.transform:
                 image_tensor = self.transform(image_pil)
                 mask_tensor = self.transform(mask_pil)
+            else:
+                image_tensor = T.ToTensor()(image_pil)
+                mask_tensor = T.ToTensor()(mask_pil)
 
             return image_tensor, mask_tensor
 
         except Exception as e:
-            print(f"处理图像 {image_name} 时出错: {e}")
-            # 返回一个空数据
-            if self.stage == 1:
-                return torch.zeros(1, 512, 512), torch.zeros(1, 512, 512)
-            else:
-                return torch.zeros(1, 512, 512), torch.zeros(1, 512, 512)
+            print(f"🚨 PIL处理图像 {image_name} 失败: {e}")
+            return torch.zeros(1, 512, 512), torch.zeros(1, 512, 512)
 
 
 # =========================
@@ -416,10 +370,6 @@ class SoftDiceLoss(nn.Module):
         self.eps = eps
 
     def forward(self, prob: torch.Tensor, target: torch.Tensor):
-        """
-        prob/target: [B,1,H,W], prob in [0,1]
-        返回：逐张图 dice loss 的平均
-        """
         b = prob.shape[0]
         p = prob.view(b, -1)
         t = target.view(b, -1)
@@ -429,7 +379,6 @@ class SoftDiceLoss(nn.Module):
         dice = (2 * inter + self.eps) / (den + self.eps)
         loss = 1.0 - dice
         return loss.mean()
-
 
 
 class BCEDiceLoss(nn.Module):
@@ -447,44 +396,53 @@ class BCEDiceLoss(nn.Module):
 # =========================
 # per-image macro metrics（逐张算再平均）
 # =========================
-
 @torch.no_grad()
-def cldice(pred,gt):
+def cldice(pred, gt):
     pred = pred.astype(bool)
     gt = gt.astype(bool)
-
     skel_pred = skeletonize(pred)
     skel_gt = skeletonize(gt)
-
-    tprec = (skel_pred & gt).sum()/(skel_pred.sum()+1e-7)
-    tsens = (skel_gt & pred).sum()/(skel_gt.sum()+1e-7)
-
+    tprec = (skel_pred & gt).sum() / (skel_pred.sum() + 1e-7)
+    tsens = (skel_gt & pred).sum() / (skel_gt.sum() + 1e-7)
     cl = 2 * tprec * tsens / (tprec + tsens + 1e-7)
-
     return cl
 
 
-def hd95(pred, gt, default_value=0):
+def get_surface(binary_mask):
+    """提取边缘的辅助函数，用于修正 HD95 的计算"""
+    return binary_mask ^ binary_erosion(binary_mask)
+
+
+def hd95(pred, gt, default_value=np.nan):
     pred = pred.astype(bool)
     gt = gt.astype(bool)
 
+    # 双方都全黑，完美匹配，距离为0
+    if pred.sum() == 0 and gt.sum() == 0:
+        return 0.0
+    # 一方有，一方没有，完全预测失败，返回 np.nan 避免拉低平均分
     if pred.sum() == 0 or gt.sum() == 0:
         return default_value
 
-    dt_pred = distance_transform_edt(~pred)
-    dt_gt = distance_transform_edt(~gt)
+    # 提取单像素边缘
+    surf_pred = get_surface(pred)
+    surf_gt = get_surface(gt)
 
-    sds1 = dt_gt[pred]
-    sds2 = dt_pred[gt]
+    # 生成基于边缘的距离场
+    dt_pred = distance_transform_edt(~surf_pred)
+    dt_gt = distance_transform_edt(~surf_gt)
+
+    # 严格计算边缘点到对方边缘的距离
+    sds1 = dt_gt[surf_pred]
+    sds2 = dt_pred[surf_gt]
 
     all_sds = np.concatenate([sds1, sds2])
 
     return np.percentile(all_sds, 95)
 
-def metrics_per_image_macro(prob: torch.Tensor, target: torch.Tensor, threshold=0.5,compute_cldice = False,compute_hd95 = False) -> Dict[str, float]:
-    """
-    prob/target: [B,1,H,W]
-    """
+
+def metrics_per_image_macro(prob: torch.Tensor, target: torch.Tensor, threshold=0.5, compute_cldice=False,
+                            compute_hd95=False) -> Dict[str, float]:
     pred = (prob > threshold).float()
     gt = (target > 0.5).float()
 
@@ -506,6 +464,7 @@ def metrics_per_image_macro(prob: torch.Tensor, target: torch.Tensor, threshold=
     iou = tp / (tp + fp + fn + eps)
     cldice_val = np.nan
     hd95_val = np.nan
+
     if compute_cldice or compute_hd95:
         cl_list = []
         hd_list = []
@@ -523,7 +482,6 @@ def metrics_per_image_macro(prob: torch.Tensor, target: torch.Tensor, threshold=
         if compute_hd95:
             hd95_val = np.nanmean(hd_list)
 
-
     return {
         "acc": acc.mean().item(),
         "precision": prec.mean().item(),
@@ -536,9 +494,8 @@ def metrics_per_image_macro(prob: torch.Tensor, target: torch.Tensor, threshold=
     }
 
 
-
 # =========================
-# train/val/test（指标 per-image macro）
+# train/val/test
 # =========================
 def run_one_epoch(model, loader, optimizer, device, loss_fn, threshold, train: bool, desc: str):
     if train:
@@ -547,7 +504,8 @@ def run_one_epoch(model, loader, optimizer, device, loss_fn, threshold, train: b
         model.eval()
 
     total_loss = 0.0
-    sum_m = {"acc": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "dice": 0.0, "iou": 0.0,"cldice": 0.0,"hd95": 0.0}
+    sum_m = {"acc": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "dice": 0.0, "iou": 0.0, "cldice": 0.0,
+             "hd95": 0.0}
     n_batches = 0
 
     for imgs, msks in tqdm(loader, desc=desc):
@@ -557,11 +515,9 @@ def run_one_epoch(model, loader, optimizer, device, loss_fn, threshold, train: b
         if train:
             optimizer.zero_grad()
             out = model(imgs)
-            # -------- 单阶段 --------
             if isinstance(out, torch.Tensor):
                 prob = out
                 loss = loss_fn(prob, msks)
-            # -------- TwoStage --------
             else:
                 p1, p2 = out
                 loss1 = loss_fn(p1, msks)
@@ -575,19 +531,21 @@ def run_one_epoch(model, loader, optimizer, device, loss_fn, threshold, train: b
             with torch.no_grad():
                 out = model(imgs)
                 if isinstance(out, tuple):
-                    prob = out[1]   
+                    prob = out[1]
                 else:
                     prob = out
-                
+
+                # ---------------------
+                # 仅修复 Loss 打印为 0 的问题
                 # ---------------------
                 loss = loss_fn(prob, msks)
                 total_loss += loss.item()
 
-
         if train:
-            m = metrics_per_image_macro(prob, msks, threshold=threshold,compute_cldice=False,compute_hd95=False)
+            m = metrics_per_image_macro(prob, msks, threshold=threshold, compute_cldice=False, compute_hd95=False)
         else:
-            m = metrics_per_image_macro(prob, msks, threshold=threshold,compute_cldice=True,compute_hd95=True)
+            m = metrics_per_image_macro(prob, msks, threshold=threshold, compute_cldice=True, compute_hd95=True)
+
         for k in sum_m:
             sum_m[k] += m[k]
         n_batches += 1
@@ -659,7 +617,7 @@ def plot_curves(history: Dict[str, Any], out_png: str):
 
     plt.tight_layout()
     plt.savefig(out_png, dpi=200, bbox_inches="tight")
-    plt.show()
+    plt.close()
 
 
 # =========================
@@ -675,7 +633,6 @@ if __name__ == "__main__":
     os.makedirs(cfg.MODELS_DIR, exist_ok=True)
     os.makedirs(cfg.RESULTS_DIR, exist_ok=True)
 
-    # -------- 预处理复制（可选）--------
     for orig_img, orig_msk, out_img, out_msk in cfg.ORIGINAL_DATA_PATHS:
         if os.path.exists(orig_img) and os.path.exists(orig_msk):
             print(f"[PRE] {orig_img} -> {out_img}")
@@ -684,10 +641,10 @@ if __name__ == "__main__":
         else:
             print(f"[PRE] skip (missing): {orig_img} or {orig_msk}")
 
+    # 保持你最原始的共享 Transform 逻辑
     transform = T.Compose([T.Resize(cfg.IMG_SIZE), T.ToTensor()])
 
     loss_fn = BCEDiceLoss(bce_w=cfg.LOSS_BCE_W, dice_w=cfg.LOSS_DICE_W)
-    # loss_fn = nn.BCELoss()
 
     history = {
         "stage1": {"train_loss": [], "val_loss": [], "train_metrics": [], "val_metrics": []},
@@ -708,9 +665,9 @@ if __name__ == "__main__":
         ds1 = VesselDataset(cfg.STAGE1_IMAGES, cfg.STAGE1_MASKS, transform=transform, stage=1)
         tr1, va1 = split_dataset(ds1, train_ratio=0.8, seed=cfg.SEED)
         dl_tr1 = DataLoader(tr1, batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=cfg.NUM_WORKERS,
-                            pin_memory=True if device.type=='cuda' else False)
+                            pin_memory=True if device.type == 'cuda' else False)
         dl_va1 = DataLoader(va1, batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=cfg.NUM_WORKERS,
-                            pin_memory=True if device.type=='cuda' else False)
+                            pin_memory=True if device.type == 'cuda' else False)
 
         opt1 = optim.Adam(stage1.parameters(), lr=cfg.LR_STAGE1)
 
@@ -719,19 +676,18 @@ if __name__ == "__main__":
 
         for epoch in range(cfg.EPOCHS_STAGE1):
             tr_loss, tr_m = run_one_epoch(stage1, dl_tr1, opt1, device, loss_fn, cfg.THRESHOLD,
-                                          train=True, desc=f"Stage1 Train E{epoch+1}")
+                                          train=True, desc=f"Stage1 Train E{epoch + 1}")
             va_loss, va_m = run_one_epoch(stage1, dl_va1, opt1, device, loss_fn, cfg.THRESHOLD,
-                                          train=False, desc=f"Stage1 Val   E{epoch+1}")
+                                          train=False, desc=f"Stage1 Val   E{epoch + 1}")
 
             history["stage1"]["train_loss"].append(tr_loss)
             history["stage1"]["val_loss"].append(va_loss)
             history["stage1"]["train_metrics"].append(tr_m)
             history["stage1"]["val_metrics"].append(va_m)
 
-            print(f"[Stage1] E{epoch+1} | loss {tr_loss:.4f}/{va_loss:.4f} "
+            print(f"[Stage1] E{epoch + 1} | loss {tr_loss:.4f}/{va_loss:.4f} "
                   f"| dice {tr_m['dice']:.4f}/{va_m['dice']:.4f} (per-image macro)")
 
-            # 以 val macro dice 作为 best & early stop
             if va_m["dice"] > best_dice + cfg.MIN_DELTA_DICE:
                 best_dice = va_m["dice"]
                 torch.save(stage1.state_dict(), cfg.BEST_STAGE1_PATH)
@@ -740,7 +696,7 @@ if __name__ == "__main__":
             else:
                 bad += 1
                 if bad >= cfg.PATIENCE_STAGE1:
-                    print(f"[Stage1] early stop at epoch={epoch+1} | best_dice={best_dice:.4f}")
+                    print(f"[Stage1] early stop at epoch={epoch + 1} | best_dice={best_dice:.4f}")
                     break
 
         stage1.load_state_dict(torch.load(cfg.BEST_STAGE1_PATH, map_location=device))
@@ -749,19 +705,19 @@ if __name__ == "__main__":
     # =========================
     # Stage 2
     # =========================
-    print(f"[Stage2] train (per-image macro) | stage2_base_ch={cfg.STAGE2_BASE_CH} | freeze_stage1={cfg.FREEZE_STAGE1_IN_STAGE2}")
+    print(
+        f"[Stage2] train (per-image macro) | stage2_base_ch={cfg.STAGE2_BASE_CH} | freeze_stage1={cfg.FREEZE_STAGE1_IN_STAGE2}")
     ds2 = VesselDataset(cfg.STAGE2_IMAGES, cfg.STAGE2_MASKS, transform=transform, stage=2)
     tr2, va2 = split_dataset(ds2, train_ratio=0.8, seed=cfg.SEED)
 
     dl_tr2 = DataLoader(tr2, batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=cfg.NUM_WORKERS,
-                        pin_memory=True if device.type=='cuda' else False)
+                        pin_memory=True if device.type == 'cuda' else False)
     dl_va2 = DataLoader(va2, batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=cfg.NUM_WORKERS,
-                        pin_memory=True if device.type=='cuda' else False)
+                        pin_memory=True if device.type == 'cuda' else False)
 
     two_stage = TwoStageUNet(stage1_model=stage1, stage2_base_ch=cfg.STAGE2_BASE_CH,
-                             freeze_stage1=cfg.FREEZE_STAGE1_IN_STAGE2,stage1_ch=cfg.STAGE1_BASE_CH).to(device)
+                             freeze_stage1=cfg.FREEZE_STAGE1_IN_STAGE2, stage1_ch=cfg.STAGE1_BASE_CH).to(device)
 
-    # 参数组：Stage1 微调小 lr，Stage2 正常 lr
     param_groups = []
 
     if not cfg.FREEZE_STAGE1_IN_STAGE2:
@@ -781,16 +737,16 @@ if __name__ == "__main__":
 
     for epoch in range(cfg.EPOCHS_STAGE2):
         tr_loss, tr_m = run_one_epoch(two_stage, dl_tr2, opt2, device, loss_fn, cfg.THRESHOLD,
-                                      train=True, desc=f"Stage2 Train E{epoch+1}")
+                                      train=True, desc=f"Stage2 Train E{epoch + 1}")
         va_loss, va_m = run_one_epoch(two_stage, dl_va2, opt2, device, loss_fn, cfg.THRESHOLD,
-                                      train=False, desc=f"Stage2 Val   E{epoch+1}")
+                                      train=False, desc=f"Stage2 Val   E{epoch + 1}")
 
         history["stage2"]["train_loss"].append(tr_loss)
         history["stage2"]["val_loss"].append(va_loss)
         history["stage2"]["train_metrics"].append(tr_m)
         history["stage2"]["val_metrics"].append(va_m)
 
-        print(f"[Stage2] E{epoch+1} | loss {tr_loss:.4f}/{va_loss:.4f} "
+        print(f"[Stage2] E{epoch + 1} | loss {tr_loss:.4f}/{va_loss:.4f} "
               f"| dice {tr_m['dice']:.4f}/{va_m['dice']:.4f} (per-image macro)")
 
         if va_m["dice"] > best_dice2 + cfg.MIN_DELTA_DICE:
@@ -801,7 +757,7 @@ if __name__ == "__main__":
         else:
             bad2 += 1
             if bad2 >= cfg.PATIENCE_STAGE2:
-                print(f"[Stage2] early stop at epoch={epoch+1} | best_dice={best_dice2:.4f}")
+                print(f"[Stage2] early stop at epoch={epoch + 1} | best_dice={best_dice2:.4f}")
                 break
 
     two_stage.load_state_dict(torch.load(cfg.BEST_STAGE2_PATH, map_location=device))
@@ -812,7 +768,7 @@ if __name__ == "__main__":
     # =========================
     dsT = VesselDataset(cfg.TEST_IMAGES, cfg.TEST_MASKS, transform=transform, stage=2)
     dlT = DataLoader(dsT, batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=cfg.NUM_WORKERS,
-                     pin_memory=True if device.type=='cuda' else False)
+                     pin_memory=True if device.type == 'cuda' else False)
 
     test_loss, test_m = run_one_epoch(two_stage, dlT, opt2, device, loss_fn, cfg.THRESHOLD,
                                       train=False, desc="TEST")
@@ -826,6 +782,8 @@ if __name__ == "__main__":
     print(f"Precision : {test_m['precision']:.4f}")
     print(f"Recall    : {test_m['recall']:.4f}")
     print(f"F1        : {test_m['f1']:.4f}")
+    print(f"clDice    : {test_m['cldice']:.4f}")
+    print(f"HD95      : {test_m['hd95']:.4f}")
     print("===============================================\n")
 
     # 保存结果
@@ -841,7 +799,8 @@ if __name__ == "__main__":
             "img_size": cfg.IMG_SIZE,
             "batch_size": cfg.BATCH_SIZE,
             "loss": {"bce_w": cfg.LOSS_BCE_W, "dice_w": cfg.LOSS_DICE_W},
-            "lrs": {"stage1": cfg.LR_STAGE1, "stage2_stage1_finetune": cfg.LR_STAGE2_STAGE1_FINETUNE, "stage2": cfg.LR_STAGE2}
+            "lrs": {"stage1": cfg.LR_STAGE1, "stage2_stage1_finetune": cfg.LR_STAGE2_STAGE1_FINETUNE,
+                    "stage2": cfg.LR_STAGE2}
         },
         "best_val_dice_stage2": best_dice2,
         "test": {"loss": test_loss, "metrics_macro": test_m},
